@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+
+{#
+  Expected context variables passed from the Flask view:
+    patient_name      (str, optional)   e.g. "Bed 12 / MRN 00219"
+    assessed_at        (str, optional)   e.g. "2026-06-19 14:32"
+    risk_score         (float)           probability in [0, 1], e.g. 0.237
+    threshold          (float)           alert cutoff in [0, 1], e.g. 0.1183
+    risk_category      (str)             one of: "Low", "Moderate", "High", "Critical"
+    sofa_score         (int, optional)
+    news_score         (int, optional)
+    shap_features       (list[dict])      [{"feature": "Lactate", "value": 0.42}, ...]
+                                          value = SHAP contribution (signed float); sorted by |value| desc
+    recommendations     (list[str], optional)  overrides the default text block below if provided
+    report_id           (str/int)         used to build the PDF download URL
+#}
+
+{% block title %}Risk Assessment Result{% endblock %}
+
+{% block extra_css %}
+<style>
+  .ews-result-wrap{
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 24px 16px 56px;
+  }
+  .ews-header-row{
+    display:flex; align-items:flex-start; justify-content:space-between;
+    flex-wrap:wrap; gap:12px; margin-bottom:20px;
+  }
+  .ews-header-row h1{ margin:0 0 4px; font-size:26px; }
+  .ews-meta{ color:#6b7280; font-size:13px; }
+
+  .ews-grid{
+    display:grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap:20px;
+  }
+  @media (max-width: 860px){ .ews-grid{ grid-template-columns:1fr; } }
+
+  .ews-card{
+    background:#fff;
+    border:1px solid #e5e7eb;
+    border-radius:12px;
+    box-shadow:0 1px 2px rgba(0,0,0,0.04), 0 6px 16px rgba(0,0,0,0.05);
+    padding:20px;
+    margin-bottom:20px;
+  }
+  .ews-card h2{
+    font-size:16px; margin:0 0 14px; color:#111827;
+    border-bottom:1px solid #e5e7eb; padding-bottom:10px;
+  }
+
+  /* Risk score card */
+  .ews-score-card{ text-align:center; }
+  .ews-score-value{
+    font-size:48px; font-weight:700; color:#111827; line-height:1;
+  }
+  .ews-score-sub{ color:#6b7280; font-size:13px; margin-top:6px; }
+
+  .ews-badge{
+    display:inline-block;
+    padding:6px 16px;
+    border-radius:999px;
+    font-weight:600;
+    font-size:13px;
+    letter-spacing:0.02em;
+    text-transform:uppercase;
+    margin-top:12px;
+  }
+  .ews-badge-low{      background:#e7f6ec; color:#1e7a4c; border:1px solid #b9dcc7; }
+  .ews-badge-moderate{ background:#fef6e0; color:#a8700a; border:1px solid #f1d99a; }
+  .ews-badge-high{     background:#feeee0; color:#c2570f; border:1px solid #f3c79a; }
+  .ews-badge-critical{ background:#fbeae8; color:#a93b34; border:1px solid #e3b4ae; }
+
+  .ews-subscores{
+    display:flex; justify-content:center; gap:24px;
+    margin-top:16px; padding-top:16px; border-top:1px solid #f1f3f2;
+  }
+  .ews-subscore{ text-align:center; }
+  .ews-subscore .num{ font-size:20px; font-weight:700; color:#111827; }
+  .ews-subscore .lbl{ font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.04em; }
+
+  #gauge-chart{ width:100%; height:260px; }
+  #shap-chart{ width:100%; height:380px; }
+
+  .ews-reco-list{ margin:0; padding-left:20px; }
+  .ews-reco-list li{ margin-bottom:8px; line-height:1.5; }
+  .ews-reco-banner{
+    border-radius:8px; padding:12px 14px; font-size:13.5px; font-weight:600; margin-bottom:14px;
+  }
+
+  .ews-actions{
+    display:flex; gap:12px; flex-wrap:wrap; margin-top:8px;
+  }
+  .ews-btn{
+    display:inline-flex; align-items:center; gap:8px;
+    padding:11px 20px; border-radius:8px; font-weight:600; font-size:14px;
+    text-decoration:none; cursor:pointer; border:1px solid transparent;
+  }
+  .ews-btn-primary{ background:#0b6e5c; color:#fff; }
+  .ews-btn-primary:hover{ background:#063f34; }
+  .ews-btn-secondary{ background:#fff; color:#374151; border-color:#d1d5db; }
+  .ews-btn-secondary:hover{ background:#f9fafb; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ews-result-wrap">
+
+  <div class="ews-header-row">
+    <div>
+      <h1>Sepsis Risk Assessment</h1>
+      <div class="ews-meta">
+        {% if patient_name %}{{ patient_name }} &middot; {% endif %}
+        Assessed {{ assessed_at or "just now" }}
+      </div>
+    </div>
+    <div class="ews-actions">
+      <a href="{{ url_for('download_report', report_id=report_id) }}" class="ews-btn ews-btn-primary">
+        ⬇ Download PDF report
+      </a>
+      <a href="{{ url_for('index') }}" class="ews-btn ews-btn-secondary">
+        ← Back
+      </a>
+    </div>
+  </div>
+
+  <div class="ews-grid">
+
+    <!-- LEFT: score card + gauge -->
+    <div>
+      <div class="ews-card ews-score-card">
+        <h2>Predicted Risk</h2>
+        <div class="ews-score-value">{{ "%.1f"|format(risk_score * 100) }}%</div>
+        <div class="ews-score-sub">Alert threshold: {{ "%.1f"|format(threshold * 100) }}%</div>
+
+        {% set cat = (risk_category or "Low")|lower %}
+        <span class="ews-badge ews-badge-{{ cat }}">{{ risk_category or "Low" }} risk</span>
+
+        {% if sofa_score is not none or news_score is not none %}
+        <div class="ews-subscores">
+          {% if sofa_score is not none %}
+          <div class="ews-subscore"><div class="num">{{ sofa_score }}</div><div class="lbl">SOFA</div></div>
+          {% endif %}
+          {% if news_score is not none %}
+          <div class="ews-subscore"><div class="num">{{ news_score }}</div><div class="lbl">NEWS</div></div>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="ews-card">
+        <h2>Probability Gauge</h2>
+        <div id="gauge-chart"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: SHAP + recommendations -->
+    <div>
+      <div class="ews-card">
+        <h2>Feature Contributions (SHAP)</h2>
+        <div id="shap-chart"></div>
+      </div>
+
+      <div class="ews-card">
+        <h2>Clinical Recommendation</h2>
+
+        {% if cat == "critical" %}
+          <div class="ews-reco-banner" style="background:#fbeae8;color:#a93b34;">
+            ⚠ Critical risk — escalate immediately per institutional sepsis protocol.
+          </div>
+        {% elif cat == "high" %}
+          <div class="ews-reco-banner" style="background:#feeee0;color:#c2570f;">
+            ⚠ High risk — notify the care team and reassess promptly.
+          </div>
+        {% elif cat == "moderate" %}
+          <div class="ews-reco-banner" style="background:#fef6e0;color:#a8700a;">
+            ◐ Moderate risk — increase monitoring frequency.
+          </div>
+        {% else %}
+          <div class="ews-reco-banner" style="background:#e7f6ec;color:#1e7a4c;">
+            ✓ Low risk — continue routine monitoring.
+          </div>
+        {% endif %}
+
+        <ul class="ews-reco-list">
+          {% if recommendations %}
+            {% for item in recommendations %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          {% else %}
+            {% if cat == "critical" %}
+              <li>Activate sepsis bundle: blood cultures, broad-spectrum antibiotics, and 30 mL/kg crystalloid for hypotension/lactate ≥ 4 mmol/L.</li>
+              <li>Obtain repeat lactate within 2–4 hours.</li>
+              <li>Consider ICU/rapid response evaluation if not already escalated.</li>
+            {% elif cat == "high" %}
+              <li>Repeat vital signs and labs within 1 hour.</li>
+              <li>Notify attending/charge nurse of elevated risk score.</li>
+              <li>Review fluid status and antibiotic timing if infection is suspected.</li>
+            {% elif cat == "moderate" %}
+              <li>Increase vital sign monitoring frequency.</li>
+              <li>Re-screen for infection source if not already identified.</li>
+              <li>Reassess risk score in 2–4 hours or with any clinical change.</li>
+            {% else %}
+              <li>Continue routine vital sign monitoring.</li>
+              <li>No immediate sepsis-specific action indicated by this score alone.</li>
+            {% endif %}
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<script>
+  (function(){
+    const riskScore  = {{ risk_score | tojson }};
+    const threshold  = {{ threshold | tojson }};
+    const shapData   = {{ shap_features | tojson }};
+
+    // ---- Probability gauge ----
+    const gaugeData = [{
+      type: "indicator",
+      mode: "gauge+number",
+      value: riskScore * 100,
+      number: { suffix: "%", font: { size: 36 } },
+      gauge: {
+        axis: { range: [0, 50], ticksuffix: "%" },
+        bar: { color: "#152826" },
+        steps: [
+          { range: [0, 6], color: "#bfe3cf" },
+          { range: [6, threshold * 100], color: "#f1d99a" },
+          { range: [threshold * 100, 50], color: "#eab3ad" }
+        ],
+        threshold: {
+          line: { color: "#a93b34", width: 3 },
+          thickness: 0.85,
+          value: threshold * 100
+        }
+      }
+    }];
+    Plotly.newPlot("gauge-chart", gaugeData, {
+      margin: { t: 20, b: 10, l: 30, r: 30 },
+      font: { family: "inherit" }
+    }, { displayModeBar: false, responsive: true });
+
+    // ---- SHAP feature contribution chart ----
+    const sorted = [...shapData].sort((a, b) => Math.abs(a.value) - Math.abs(b.value));
+    const shapTrace = [{
+      type: "bar",
+      orientation: "h",
+      x: sorted.map(d => d.value),
+      y: sorted.map(d => d.feature),
+      marker: {
+        color: sorted.map(d => d.value >= 0 ? "#a93b34" : "#0b6e5c")
+      }
+    }];
+    Plotly.newPlot("shap-chart", shapTrace, {
+      margin: { t: 10, b: 30, l: 140, r: 20 },
+      xaxis: { title: "SHAP value (impact on predicted risk)", zeroline: true },
+      font: { family: "inherit", size: 12 }
+    }, { displayModeBar: false, responsive: true });
+  })();
+</script>
+{% endblock %}

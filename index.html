@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+
+{#
+  Expected (optional) context variables from the Flask view:
+    metrics            (dict)  {"auroc": 0.9358, "auprc": 0.4250, "f2": 0.5556}
+                       — falls back to the values below if not passed.
+    feature_groups     (dict)  ordered mapping of group label -> list of field defs, e.g.
+                       {
+                         "Vital Signs": [
+                           {"id":"HR","label":"Heart Rate","unit":"bpm","value":80,
+                            "step":1,"min":0,"max":300,"help":"Normal 60-100"},
+                           ...
+                         ],
+                         "Laboratory Parameters": [...],
+                         "Derived Features": [...]
+                       }
+                       Field def keys: id, label, unit, type ("number"|"select"),
+                       value, placeholder, step, min, max, required, help,
+                       options (for type="select": [{"value":..,"label":..}]).
+                       If omitted, a sensible default set (below) is rendered so
+                       this page also works standalone.
+    predict_endpoint   (str)   Jinja endpoint name for the form POST target,
+                       defaults to "predict".
+#}
+
+{% set m = metrics if metrics is defined else {} %}
+
+{% set default_feature_groups = {
+  "Vital Signs": [
+    {"id":"HR","label":"Heart Rate","unit":"bpm","value":80,"step":1,"min":0,"max":300,"help":"Normal 60–100"},
+    {"id":"O2Sat","label":"SpO\u2082","unit":"%","value":98,"step":0.1,"min":0,"max":100,"help":"Normal \u226595"},
+    {"id":"Temp","label":"Temperature","unit":"\u00b0C","value":36.8,"step":0.1,"min":25,"max":45,"help":"Normal 36.0\u201338.3"},
+    {"id":"SBP","label":"Systolic BP","unit":"mmHg","value":120,"step":1,"min":0,"max":300,"help":"Normal 90\u2013140"},
+    {"id":"MAP","label":"MAP","unit":"mmHg","value":85,"step":1,"min":0,"max":250,"help":"Normal \u226565"},
+    {"id":"DBP","label":"Diastolic BP","unit":"mmHg","value":75,"step":1,"min":0,"max":200,"help":"Normal 60\u201390"},
+    {"id":"Resp","label":"Respiratory Rate","unit":"/min","value":16,"step":1,"min":0,"max":80,"help":"Normal 12\u201320"},
+    {"id":"EtCO2","label":"EtCO\u2082","unit":"mmHg","value":35,"step":1,"min":0,"max":100,"help":"Normal 35\u201345"}
+  ],
+  "Laboratory Parameters": [
+    {"id":"Glucose","label":"Glucose","unit":"mg/dL","placeholder":"70\u2013100","step":1,"min":0,"max":1500},
+    {"id":"BUN","label":"BUN","unit":"mg/dL","placeholder":"7\u201320","step":0.1,"min":0,"max":300},
+    {"id":"Creatinine","label":"Creatinine","unit":"mg/dL","placeholder":"0.6\u20131.2","step":0.01,"min":0,"max":30},
+    {"id":"Calcium","label":"Calcium","unit":"mg/dL","placeholder":"8.5\u201310.2","step":0.1,"min":0,"max":20},
+    {"id":"Magnesium","label":"Magnesium","unit":"mg/dL","placeholder":"1.7\u20132.2","step":0.1,"min":0,"max":10},
+    {"id":"Phosphate","label":"Phosphate","unit":"mg/dL","placeholder":"2.5\u20134.5","step":0.1,"min":0,"max":20},
+    {"id":"Potassium","label":"Potassium","unit":"mEq/L","placeholder":"3.5\u20135.0","step":0.1,"min":0,"max":12},
+    {"id":"pH","label":"pH","unit":"","placeholder":"7.35\u20137.45","step":0.01,"min":6.5,"max":8.0},
+    {"id":"PaCO2","label":"PaCO\u2082","unit":"mmHg","placeholder":"35\u201345","step":0.1,"min":0,"max":150},
+    {"id":"BaseExcess","label":"Base Excess","unit":"mEq/L","placeholder":"\u22122 to 2","step":0.1,"min":-30,"max":30},
+    {"id":"HCO3","label":"HCO\u2083\u207b","unit":"mmol/L","placeholder":"22\u201326","step":0.1,"min":0,"max":60},
+    {"id":"SaO2","label":"SaO\u2082","unit":"%","placeholder":"95\u2013100","step":0.1,"min":0,"max":100},
+    {"id":"FiO2","label":"FiO\u2082","unit":"fraction","placeholder":"0.21\u20131.0","step":0.01,"min":0.21,"max":1},
+    {"id":"Hct","label":"Hematocrit","unit":"%","placeholder":"36\u201346","step":0.1,"min":0,"max":75},
+    {"id":"Hgb","label":"Hemoglobin","unit":"g/dL","placeholder":"12\u201316","step":0.1,"min":0,"max":25},
+    {"id":"WBC","label":"WBC","unit":"\u00d710\u00b3/\u00b5L","placeholder":"4\u201311","step":0.1,"min":0,"max":200},
+    {"id":"Platelets","label":"Platelets","unit":"\u00d710\u00b3/\u00b5L","placeholder":"150\u2013400","step":1,"min":0,"max":1500},
+    {"id":"PTT","label":"PTT","unit":"sec","placeholder":"25\u201335","step":0.1,"min":0,"max":200},
+    {"id":"Fibrinogen","label":"Fibrinogen","unit":"mg/dL","placeholder":"200\u2013400","step":1,"min":0,"max":1500},
+    {"id":"Bilirubin_total","label":"Total Bilirubin","unit":"mg/dL","placeholder":"0.3\u20131.2","step":0.01,"min":0,"max":50},
+    {"id":"AST","label":"AST","unit":"U/L","placeholder":"10\u201340","step":1,"min":0,"max":5000},
+    {"id":"Alkalinephos","label":"Alk. Phosphatase","unit":"U/L","placeholder":"44\u2013147","step":1,"min":0,"max":2000},
+    {"id":"TroponinI","label":"Troponin I","unit":"ng/mL","placeholder":"< 0.04","step":0.001,"min":0,"max":100},
+    {"id":"Lactate","label":"Lactate","unit":"mmol/L","placeholder":"0.5\u20132.0","step":0.1,"min":0,"max":30}
+  ],
+  "Derived Features": [
+    {"id":"Age","label":"Age","unit":"yrs","value":65,"step":1,"min":0,"max":120},
+    {"id":"Gender","label":"Sex","type":"select","value":"1","options":[{"value":"1","label":"Male"},{"value":"0","label":"Female"}]},
+    {"id":"IcuUnit","label":"ICU Unit","type":"select","value":"none","options":[{"value":"none","label":"Not specified"},{"value":"micu","label":"Medical ICU"},{"value":"sicu","label":"Surgical ICU"}]},
+    {"id":"ICULOS","label":"Hours in ICU","unit":"hr","value":5,"step":1,"min":0,"help":"Also used as hours_in_icu"},
+    {"id":"HospAdmTime","label":"Hosp.\u2192ICU Gap","unit":"hr","value":-10,"step":1,"help":"Usually negative"},
+    {"id":"p1_HR","label":"Heart Rate, 1h ago","unit":"bpm","placeholder":"optional","step":1},
+    {"id":"p1_Lactate","label":"Lactate, 1h ago","unit":"mmol/L","placeholder":"optional","step":0.1},
+    {"id":"p2_HR","label":"Heart Rate, 2h ago","unit":"bpm","placeholder":"optional","step":1},
+    {"id":"p2_Lactate","label":"Lactate, 2h ago","unit":"mmol/L","placeholder":"optional","step":0.1},
+    {"id":"h_sofa3","label":"SOFA, 3h ago","unit":"score","placeholder":"optional","step":1},
+    {"id":"h_sofa6","label":"SOFA, 6h ago","unit":"score","placeholder":"optional","step":1},
+    {"id":"h_news3","label":"NEWS, 3h ago","unit":"score","placeholder":"optional","step":1}
+  ]
+} %}
+
+{% set groups = feature_groups if feature_groups is defined else default_feature_groups %}
+{% set group_icons = {
+  "Vital Signs": "fa-solid fa-heart-pulse",
+  "Laboratory Parameters": "fa-solid fa-vial",
+  "Derived Features": "fa-solid fa-chart-line"
+} %}
+
+{% block title %}Dashboard — Sepsis Early Warning System{% endblock %}
+{% block page_title %}Risk Calculator{% endblock %}
+
+{% block extra_css %}
+<style>
+  .hero{
+    position:relative;
+    border-radius: var(--radius-lg);
+    padding:46px 38px;
+    margin-bottom:26px;
+    overflow:hidden;
+    background: var(--brand-grad);
+    color:#fff;
+    box-shadow: var(--shadow-lg);
+  }
+  .hero::before{
+    content:"";
+    position:absolute; inset:0;
+    background-image: radial-gradient(circle at 85% 15%, rgba(255,255,255,0.22), transparent 55%),
+      radial-gradient(circle at 10% 90%, rgba(255,255,255,0.12), transparent 50%);
+    pointer-events:none;
+  }
+  .hero-inner{ position:relative; max-width:640px; }
+  .hero-eyebrow{
+    font-size:12px; text-transform:uppercase; letter-spacing:.12em; font-weight:700;
+    color:rgba(255,255,255,0.85); margin-bottom:10px; display:flex; align-items:center; gap:8px;
+  }
+  .hero h2{ font-size:30px; font-weight:700; margin:0 0 12px; color:#fff; }
+  .hero p{ font-size:14.5px; color:rgba(255,255,255,0.9); margin:0 0 22px; line-height:1.6; }
+  .hero .btn-hero{
+    background:#fff; color:var(--brand-2); border:none; font-weight:700;
+  }
+  .hero .btn-hero:hover{ filter:brightness(0.97); transform:translateY(-2px); }
+  .hero-stats{
+    position:relative; display:flex; gap:26px; margin-top:26px; flex-wrap:wrap;
+  }
+  .hero-stat .num{ font-size:20px; font-weight:800; }
+  .hero-stat .lbl{ font-size:11.5px; color:rgba(255,255,255,0.8); text-transform:uppercase; letter-spacing:.04em; }
+
+  .metric-card .kpi-icon{ background: var(--brand-grad); }
+  .metric-card .kpi-value{ font-size:32px; }
+  .metric-card .kpi-caption{ font-size:12px; color:var(--muted); margin-top:4px; }
+
+  .group-card .card-header i{ color:var(--brand-2); margin-right:8px; }
+
+  #predict-submit-btn .spinner{ border-top-color:#fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-eyebrow"><i class="fa-solid fa-shield-heart"></i> Clinical Decision Support</div>
+    <h2>Sepsis Early Warning System</h2>
+    <p>
+      Estimate a patient's real-time sepsis risk from vital signs, laboratory values, and derived
+      severity scores using a gradient-boosted ensemble trained on ICU time-series data.
+    </p>
+    <a href="#prediction-form" class="btn btn-hero">
+      <i class="fa-solid fa-stethoscope"></i>&nbsp; Start an Assessment
+    </a>
+
+    <div class="hero-stats">
+      <div class="hero-stat"><div class="num">{{ "%.2f"|format((m.auroc if m.auroc is defined else 0.9358)) }}</div><div class="lbl">AUROC</div></div>
+      <div class="hero-stat"><div class="num">{{ "%.2f"|format((m.auprc if m.auprc is defined else 0.4250)) }}</div><div class="lbl">AUPRC</div></div>
+      <div class="hero-stat"><div class="num">{{ "%.2f"|format((m.f2 if m.f2 is defined else 0.5556)) }}</div><div class="lbl">F2 Score</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ METRIC CARDS ============ -->
+<div class="row g-3 mb-24">
+  <div class="col-md-4">
+    <div class="card glass-card metric-card h-100">
+      <div class="card-body">
+        <div class="kpi-icon"><i class="fa-solid fa-bullseye"></i></div>
+        <div class="kpi-label">AUROC</div>
+        <div class="kpi-value">{{ "%.4f"|format((m.auroc if m.auroc is defined else 0.9358)) }}</div>
+        <div class="kpi-caption">Area under the ROC curve — overall discrimination between septic and non-septic encounters.</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card glass-card metric-card h-100">
+      <div class="card-body">
+        <div class="kpi-icon"><i class="fa-solid fa-chart-area"></i></div>
+        <div class="kpi-label">AUPRC</div>
+        <div class="kpi-value">{{ "%.4f"|format((m.auprc if m.auprc is defined else 0.4250)) }}</div>
+        <div class="kpi-caption">Area under the precision-recall curve — performance on the rare positive (sepsis) class.</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card glass-card metric-card h-100">
+      <div class="card-body">
+        <div class="kpi-icon"><i class="fa-solid fa-layer-group"></i></div>
+        <div class="kpi-label">F2 Score</div>
+        <div class="kpi-value">{{ "%.4f"|format((m.f2 if m.f2 is defined else 0.5556)) }}</div>
+        <div class="kpi-caption">Weights recall over precision — tuned to minimize missed sepsis cases.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PREDICTION FORM ============ -->
+<form id="prediction-form"
+      action="{{ url_for(predict_endpoint if predict_endpoint is defined else 'predict') }}"
+      method="POST"
+      data-validate
+      data-spinner-on-submit
+      novalidate>
+
+  {% for group_name, fields in groups.items() %}
+  <div class="card glass-card group-card mb-24" id="group-{{ loop.index }}">
+    <div class="card-header">
+      <h2><i class="{{ group_icons.get(group_name, 'fa-solid fa-list') }}"></i>{{ group_name }}</h2>
+      <span class="muted">{{ fields|length }} field{{ 's' if fields|length != 1 else '' }}</span>
+    </div>
+    <div class="card-body">
+      <div class="field-grid">
+        {% for f in fields %}
+        <div class="field">
+          <label for="{{ f.id }}">
+            <span>{{ f.label }}</span>
+            {% if f.unit %}<span class="unit">{{ f.unit }}</span>{% endif %}
+          </label>
+
+          {% if f.type == "select" %}
+          <select id="{{ f.id }}" name="{{ f.id }}" {% if f.required %}required{% endif %}>
+            {% for opt in f.options %}
+            <option value="{{ opt.value }}" {% if (f.value|string) == (opt.value|string) %}selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <input
+            type="number"
+            id="{{ f.id }}"
+            name="{{ f.id }}"
+            {% if f.value is defined and f.value is not none %}value="{{ f.value }}"{% endif %}
+            {% if f.placeholder %}placeholder="{{ f.placeholder }}"{% endif %}
+            step="{{ f.step if f.step is defined else 'any' }}"
+            {% if f.min is defined %}min="{{ f.min }}"{% endif %}
+            {% if f.max is defined %}max="{{ f.max }}"{% endif %}
+            {% if f.required %}required{% endif %}
+          >
+          {% endif %}
+
+          {% if f.help %}<span class="range">{{ f.help }}</span>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="flex items-center gap-12 mb-24">
+    <button type="submit" id="predict-submit-btn" class="btn btn-primary" data-loading-label="Calculating risk…">
+      <i class="fa-solid fa-magnifying-glass-chart"></i>&nbsp; Calculate Sepsis Risk
+    </button>
+    <button type="reset" class="btn btn-secondary">
+      <i class="fa-solid fa-rotate-left"></i>&nbsp; Reset Form
+    </button>
+  </div>
+
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Smooth-scroll the hero CTA to the prediction form
+  document.querySelectorAll('a[href="#prediction-form"]').forEach(function (link) {
+    link.addEventListener("click", function (e) {
+      e.preventDefault();
+      var target = document.getElementById("prediction-form");
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+</script>
+{% endblock %}

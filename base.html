@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}ICU Sepsis Early Warning System{% endblock %}</title>
+
+<!-- Prevent flash-of-wrong-theme: apply saved/preferred theme before first paint -->
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem("ews-theme");
+      var theme = saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) { /* localStorage unavailable — default to light */ }
+  })();
+</script>
+
+<!-- Google Fonts: Poppins -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+<!-- Bootstrap 5 -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<!-- Font Awesome -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+<!-- App stylesheet (healthcare SaaS theme / glassmorphism / dark mode) -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+{% block extra_css %}{% endblock %}
+
+<style>
+  /* Poppins as the dashboard's primary typeface (overrides style.css base font) */
+  body, .btn, .nav-link, input, select, textarea, table {
+    font-family: 'Poppins', 'Inter', 'Segoe UI', system-ui, sans-serif;
+  }
+  h1, h2, h3, h4, h5, .brand, .kpi-value {
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+  }
+
+  /* Sidebar toggle (mobile) */
+  .sidebar-backdrop{
+    display:none; position:fixed; inset:0; background:rgba(8,14,28,0.45); z-index:55;
+  }
+  .sidebar-backdrop.is-open{ display:block; }
+  .sidebar-toggle-btn{ display:none; }
+  @media (max-width:900px){
+    .sidebar-toggle-btn{ display:inline-flex; }
+  }
+
+  /* Navbar dropdown polish */
+  .topbar .dropdown-menu{
+    border:1px solid var(--border-glass);
+    background:var(--surface-glass-strong);
+    backdrop-filter:blur(var(--blur));
+    -webkit-backdrop-filter:blur(var(--blur));
+    box-shadow:var(--shadow-md);
+    border-radius:var(--radius-md);
+  }
+  .topbar .dropdown-item{ color:var(--ink-soft); font-size:13.5px; border-radius:8px; }
+  .topbar .dropdown-item:hover{ background:var(--brand-grad-soft); color:var(--brand-2); }
+  .topbar .badge-dot{
+    position:absolute; top:-2px; right:-2px; width:9px; height:9px; border-radius:50%;
+    background:var(--danger); border:2px solid var(--surface);
+  }
+
+  /* Footer */
+  .app-footer{
+    grid-column: 1 / -1;
+    border-top:1px solid var(--border-glass);
+    background:var(--surface-glass);
+    backdrop-filter:blur(var(--blur));
+    -webkit-backdrop-filter:blur(var(--blur));
+    padding:18px 28px;
+    display:flex; align-items:center; justify-content:space-between;
+    flex-wrap:wrap; gap:10px;
+    font-size:12.5px; color:var(--muted);
+  }
+  .app-footer a{ color:var(--muted); margin-left:14px; }
+  .app-footer a:hover{ color:var(--brand-2); }
+  .footer-disclaimer{
+    width:100%; padding-top:10px; margin-top:10px; border-top:1px dashed var(--line);
+    font-size:11.5px; color:var(--faint); line-height:1.5;
+  }
+
+  .app-shell{ grid-template-rows: auto 1fr auto; }
+  .app-shell-main{ display:flex; flex-direction:column; min-height:100vh; }
+</style>
+</head>
+<body>
+
+<div class="app-shell" style="display:grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: 1fr auto; min-height:100vh;">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span>Sepsis EWS</span>
+    </div>
+
+    <div class="nav-section-label">Overview</div>
+    <a href="{{ url_for('dashboard') }}" class="nav-link {% if active_page == 'dashboard' %}active{% endif %}">
+      <i class="fa-solid fa-gauge-high"></i> Dashboard
+    </a>
+    <a href="#" class="nav-link {% if active_page == 'patients' %}active{% endif %}">
+      <i class="fa-solid fa-bed-pulse"></i> Patients
+    </a>
+    <a href="#" class="nav-link {% if active_page == 'calculator' %}active{% endif %}">
+      <i class="fa-solid fa-stethoscope"></i> Risk Calculator
+    </a>
+    <a href="#" class="nav-link {% if active_page == 'reports' %}active{% endif %}">
+      <i class="fa-solid fa-file-medical"></i> Reports
+    </a>
+
+    <div class="nav-section-label">Insights</div>
+    <a href="#" class="nav-link {% if active_page == 'trends' %}active{% endif %}">
+      <i class="fa-solid fa-chart-line"></i> Trends
+    </a>
+    <a href="#" class="nav-link {% if active_page == 'alerts' %}active{% endif %}">
+      <i class="fa-solid fa-triangle-exclamation"></i> Alerts
+    </a>
+
+    <div class="nav-section-label">System</div>
+    <a href="#" class="nav-link {% if active_page == 'settings' %}active{% endif %}">
+      <i class="fa-solid fa-gear"></i> Settings
+    </a>
+    <a href="#" class="nav-link {% if active_page == 'help' %}active{% endif %}">
+      <i class="fa-solid fa-circle-question"></i> Help
+    </a>
+  </aside>
+
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <!-- ============ MAIN COLUMN (topbar + content) ============ -->
+  <div class="app-shell-main">
+
+    <!-- ============ TOPBAR / NAVBAR ============ -->
+    <header class="topbar">
+      <div class="flex items-center gap-16">
+        <button class="btn btn-icon btn-ghost sidebar-toggle-btn" id="sidebar-toggle" aria-label="Toggle navigation">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+      </div>
+
+      <div class="topbar-actions">
+
+        <button class="btn btn-icon btn-ghost" title="Notifications" style="position:relative;">
+          <i class="fa-regular fa-bell"></i>
+          <span class="badge-dot"></span>
+        </button>
+
+        <button class="theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Toggle dark mode" title="Toggle dark mode"></button>
+
+        <div class="dropdown">
+          <button class="btn btn-ghost dropdown-toggle d-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false" style="padding:6px 10px;">
+            <span class="avatar">{{ (current_user.initials if current_user is defined else "DR") }}</span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><a class="dropdown-item" href="#"><i class="fa-regular fa-user me-2"></i>Profile</a></li>
+            <li><a class="dropdown-item" href="#"><i class="fa-solid fa-gear me-2"></i>Settings</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#"><i class="fa-solid fa-right-from-bracket me-2"></i>Sign out</a></li>
+          </ul>
+        </div>
+
+      </div>
+    </header>
+
+    <!-- ============ PAGE CONTENT ============ -->
+    <main class="main-content fade-in">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'error' else (category or 'good') }} mb-16" role="alert">
+              <i class="fa-solid {{ 'fa-circle-exclamation' if category == 'error' else 'fa-circle-check' }}"></i>
+              <span>{{ message }}</span>
+            </div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>
+
+  <!-- ============ FOOTER ============ -->
+  <footer class="app-footer">
+    <div>
+      <i class="fa-solid fa-heart-pulse" style="color:var(--brand-2); margin-right:6px;"></i>
+      &copy; {{ current_year if current_year is defined else 2026 }} Sepsis EWS. All rights reserved.
+    </div>
+    <div>
+      <a href="#">Documentation</a>
+      <a href="#">Privacy</a>
+      <a href="#">Support</a>
+    </div>
+    <div class="footer-disclaimer">
+      Decision-support prototype for clinical education / portfolio use only. Not a certified medical device — it must never replace clinical judgment or your institution's sepsis protocol.
+    </div>
+  </footer>
+
+</div>
+
+<!-- Bootstrap 5 JS bundle (popper + dropdowns + collapse) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Plotly (used by gauge / SHAP charts on dashboard.js-enabled pages) -->
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+
+<!-- App dashboard script (theme toggle, spinners, charts, form validation) -->
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+
+<script>
+  // Mobile sidebar open/close
+  (function () {
+    var sidebar = document.getElementById("sidebar");
+    var toggleBtn = document.getElementById("sidebar-toggle");
+    var backdrop = document.getElementById("sidebar-backdrop");
+    if (!sidebar || !toggleBtn || !backdrop) return;
+
+    function closeSidebar() {
+      sidebar.classList.remove("is-open");
+      backdrop.classList.remove("is-open");
+    }
+    toggleBtn.addEventListener("click", function () {
+      sidebar.classList.toggle("is-open");
+      backdrop.classList.toggle("is-open");
+    });
+    backdrop.addEventListener("click", closeSidebar);
+    window.addEventListener("resize", function () {
+      if (window.innerWidth > 900) closeSidebar();
+    });
+  })();
+</script>
+
+{% block scripts %}{% endblock %}
+
+</body>
+</html>

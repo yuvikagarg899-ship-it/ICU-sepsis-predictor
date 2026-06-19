@@ -1,0 +1,7 @@
+Metric,Score
+XGBoost AUROC,0.9358
+XGBoost AUPRC,0.425
+XGBoost F2,0.5556
+CV Mean AUROC (XGBoost),0.8426
+CV Mean AUPRC (XGBoost),0.2746
+Optimal Threshold,0.1183
